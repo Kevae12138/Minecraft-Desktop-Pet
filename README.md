@@ -103,7 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -Action te
 ## 来源与致谢
 
 - 原项目：[DLmember/Minecraft-Desktop-Pet](https://github.com/DLmember/Minecraft-Desktop-Pet)，感谢原作者及贡献者。
-- 上游 Q 版模型等功能包含 [zsyghxf 的贡献](https://github.com/DLmember/Minecraft-Desktop-Pet/pull/5)，具体历史见 [CHANGELOG.md](CHANGELOG.md)。
+- 上游 Q 版模型等功能包含 [zsyghxf 的贡献](https://github.com/DLmember/Minecraft-Desktop-Pet/pull/5)，感谢其贡献。
 - 界面设计参考：[farion1231/cc-switch](https://github.com/farion1231/cc-switch)，相关 MIT 归属保留在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 应用代码遵循 [MIT License](LICENSE)。依赖许可证位于 `native/licenses`；运行包附有相应许可证。Windows 字体由系统提供，不分发字体文件。
