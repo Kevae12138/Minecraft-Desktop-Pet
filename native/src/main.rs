@@ -9,6 +9,7 @@ mod ui;
 mod updates;
 mod music;
 mod theme;
+mod tray_panel;
 mod window_order;
 use config::{Position, Settings, Store};
 use glam::Vec2;
@@ -196,6 +197,8 @@ pub struct App {
     menu_open: bool,
     taskbar_msg: u32,
     panel_scale: f32,
+    panel_ui: theme::PanelUi,
+    tray_ui: tray_panel::TrayPanel,
     layout: Vec<(HWND, [i32; 4])>,
     page_controls: Vec<(HWND, u8)>,
     panel_page: u8,
@@ -275,6 +278,8 @@ impl App {
             menu_open: false,
             taskbar_msg: 0,
             panel_scale: 1.,
+            panel_ui: theme::PanelUi::default(),
+            tray_ui: tray_panel::TrayPanel::default(),
             layout: Vec::new(),
             page_controls: Vec::new(),
             panel_page: 0,
@@ -917,7 +922,7 @@ impl App {
             171 => { self.settings.music_notes = !self.settings.music_notes; self.changed(); }
             172 => { self.settings.tease_enabled = !self.settings.tease_enabled; self.changed(); }
             173 => { self.settings.breathing_animation = !self.settings.breathing_animation;  self.changed(); }
-            150..=152 => self.show_page((id - 150) as u8),
+            150..=154 => self.show_page((id - 150) as u8),
             140..=143 => {
                 self.settings.scale = [0.75, 1., 1.25, 1.5][(id - 140) as usize];
                 self.resize_pet();
@@ -947,86 +952,7 @@ impl App {
         self.resizing = false;
     }
     unsafe fn popup(&mut self) {
-        if self.menu_open {
-            return;
-        }
-        self.menu_open = true;
-        self.drag = None;
-        let menu = CreatePopupMenu();
-        let items = [
-            (100, "打开控制台", false),
-            (101, "导入皮肤…", false),
-            (168, "喂食苹果", false),
-            (0, "", false),
-            (110, "站立", self.settings.posture == "standing"),
-            (111, "坐下", self.settings.posture == "sitting"),
-            (117, "自定义姿态", self.settings.posture == "custom"),
-            (118, "右手挥动", self.settings.main_hand == "right"),
-            (119, "左手挥动", self.settings.main_hand == "left"),
-            (165, "实际映射", self.settings.main_hand == "mapped"),
-            (166, "反向映射", self.settings.main_hand == "reverse"),
-            (0, "", false),
-            (112, "精准按键", self.settings.typing_mode == "precise"),
-            (113, "双手交替", self.settings.typing_mode == "alternating"),
-            (114, "经典手臂", self.settings.arm_model == "classic"),
-            (115, "纤细手臂", self.settings.arm_model == "slim"),
-            (0, "", false),
-            (120, "保持置顶", self.settings.always_on_top),
-            (121, "完全鼠标穿透", self.settings.click_through),
-            (122, "全局键盘互动", self.settings.keyboard_enabled),
-            (123, "视线跟随鼠标", self.settings.track_mouse),
-            (138, "显示正版披风", self.settings.show_cape),
-            (139, "Q 版小人", self.settings.chibi),
-            (0, "", false),
-            (140, "大小 75%", (self.settings.scale - 0.75).abs() < 0.01),
-            (141, "大小 100%", (self.settings.scale - 1.).abs() < 0.01),
-            (142, "大小 125%", (self.settings.scale - 1.25).abs() < 0.01),
-            (143, "大小 150%", (self.settings.scale - 1.5).abs() < 0.01),
-            (130, "把桌宠移到屏幕中央", false),
-            (
-                131,
-                if self.hidden {
-                    "显示桌宠"
-                } else {
-                    "暂时隐藏桌宠"
-                },
-                false,
-            ),
-            (0, "", false),
-            (160, "随 Windows 登录启动", self.settings.autostart),
-            (0, "", false),
-            (199, "退出Minecraft桌宠", false),
-        ];
-        for (id, label, checked) in items {
-            AppendMenuW(
-                menu,
-                if id == 0 {
-                    MF_SEPARATOR
-                } else {
-                    MF_STRING | if checked { MF_CHECKED } else { 0 }
-                },
-                id as usize,
-                wide(label).as_ptr(),
-            );
-        }
-        let mut p = POINT { x: 0, y: 0 };
-        GetCursorPos(&mut p);
-        SetForegroundWindow(self.hwnd);
-        let id = TrackPopupMenu(
-            menu,
-            TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            p.x,
-            p.y,
-            0,
-            self.hwnd,
-            null(),
-        );
-        DestroyMenu(menu);
-        PostMessageW(self.hwnd, WM_NULL, 0, 0);
-        self.menu_open = false;
-        if id != 0 {
-            self.command(id as u32);
-        }
+        tray_panel::open(self);
     }
     unsafe fn tray(&self, action: u32) -> bool {
         let mut data: NOTIFYICONDATAW = std::mem::zeroed();
@@ -1231,6 +1157,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             0
         }
         WM_DESTROY => {
+            tray_panel::close(a);
             a.tray(NIM_DELETE);
             UnregisterHotKey(hwnd, 1);
             if !a.hook.is_null() {
@@ -1449,6 +1376,18 @@ fn main() {
             app.apply_theme();
             ui::diagnostic_init(&mut app);
         }
+        if diag && args.iter().any(|a| a == "--ui-self-test") {
+            let result = ui::panel_self_test(&mut app);
+            if let Err(error) = &result {
+                let _ = std::fs::write(app.store.dir.join("ui-self-test-error.txt"), error);
+            }
+            DestroyWindow(hwnd);
+            CloseHandle(mutex);
+            APP = null_mut();
+            PET_HWND = null_mut();
+            if result.is_err() { std::process::exit(1); }
+            return;
+        }
         let mut timer = CreateWaitableTimerExW(
             null(),
             null(),
@@ -1468,6 +1407,7 @@ fn main() {
                 if msg.message == WM_QUIT {
                     break 'messages;
                 }
+                if tray_panel::dialog_message(&app, &msg) { continue; }
                 if app.panel.is_null() || IsDialogMessageW(app.panel, &msg) == 0 {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);

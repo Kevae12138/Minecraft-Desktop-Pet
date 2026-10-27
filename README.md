@@ -1,78 +1,111 @@
-# Minecraft桌宠
+# Minecraft 桌宠 · Windows UI 增强版
 
-让一个 Minecraft 风格的小人待在桌面上，跟着鼠标转头，陪你敲键盘。
+让 Minecraft 风格的小人陪伴你的桌面，同时拥有更清晰、流畅的控制台与托盘菜单。
 
-**由GPT 6 Astra制作**
+本仓库是 [DLmember/Minecraft-Desktop-Pet](https://github.com/DLmember/Minecraft-Desktop-Pet) 的 Fork。`windows-ui-v4` 分支基于上游 v2.5 系列，集中优化 **Windows 界面与交互体验**，保留原有桌宠功能。界面参考 [CC Switch](https://github.com/farion1231/cc-switch)，使用原生 Rust + Win32 实现。
 
-> 本项目是独立粉丝作品，与 Mojang Studios 或 Microsoft 无关联，未获其授权、赞助或官方认可。Minecraft 名称及相关商标归其各自权利人所有。
+**Windows 10 / 11 x64 · 便携运行 · 原生 Win32 · MIT**
 
-## 下载
+## 下载与运行
 
-前往 [最新版本](https://github.com/DLmember/Minecraft-Desktop-Pet/releases/latest)，下载 **Minecraft-Desktop-Pet-2.5-Windows.zip**，解压后双击 **Minecraft桌宠.exe**。
+- **[下载 Windows 完整运行包（推荐）](https://github.com/Kevae12138/Minecraft-Desktop-Pet/releases/download/ui-v4/Minecraft-Desktop-Pet-UI-v4-Windows-x64.zip)**：包含 EXE、使用说明与第三方许可证。
+- **[直接下载 EXE](https://github.com/Kevae12138/Minecraft-Desktop-Pet/releases/download/ui-v4/Minecraft-Desktop-Pet-UI-v4-Windows-x64.exe)**：无需额外运行环境。
+- [查看 UI v4 发布说明](https://github.com/Kevae12138/Minecraft-Desktop-Pet/releases/tag/ui-v4) · [下载本版本源码 ZIP](https://github.com/Kevae12138/Minecraft-Desktop-Pet/archive/refs/tags/ui-v4.zip)
 
-支持 **Windows 10/11 x64 、 macOS 12+**。便携运行，不需要安装 Electron、Java 或额外运行环境。v2.5 提供 Windows 版，macOS版还有些问题，等一下，macOS 请暂时先使用 v2.4.12。
+先从系统托盘退出旧版，再解压并运行 `Minecraft桌宠.exe`。双击托盘图标打开控制台，右键打开快捷菜单。首次运行默认开启鼠标穿透；如需拖动桌宠，请先关闭“完全鼠标穿透”。
 
-**首次启动默认开启完全鼠标穿透。** 请双击任务栏托盘图标打开控制台；想拖动桌宠时先取消“完全鼠标穿透”。图标可能收在任务栏的隐藏图标区域。
+本分支的 EXE 基础版本号仍为 **2.5.0**，界面修订号为 **UI v4**。软件内“项目主页”和“检查更新”仍沿用上游入口；本分支的界面版本请从上面的发布页获取。
 
-## 可以做什么
+## UI 展示
 
-- 导入本地 PNG 皮肤，或输入 Java 版正版用户名 / UUID 获取皮肤；支持经典和纤细手臂、旧版及高清皮肤、皮肤外层。
-- 站立、坐下，或分别自定义站姿和坐姿。身体和四肢可以旋转，不做肘膝弯曲。
-- 头部跟随鼠标，水平与垂直方向的灵敏度、范围和中心点均可调整；整体角度也可调整。
-- 站立时按住 Shift 立即潜行；坐下时随全局键盘输入敲击键盘，支持精准位置和双手交替。
-- 长按按键保持手位，松开后自然回位。打字时短暂压低身体，幅度可调；快速敲字会重新播放动作。
-- 点击鼠标挥动主手，可切换左右手；连续点击会立即重新挥动。
-- 置顶、缩放、自由摆放和完全鼠标穿透。
-- 可选随 Windows 登录自动启动，通过控制台或右键菜单开启、关闭。
-- 用正版 ID 获取皮肤时，会一并取下账号当前佩戴的披风并显示在背后。穿透时鼠标移到桌宠上，会在约 0.15 秒内淡至 25% 不透明度。
-- 可选 **hyp快速队伍聊天**：键盘输入半角 `#` 自动替换成 `/p chat `，不自动发送。
-- 30 / 60 / 90 / 120 / 144 / 165 / 240 FPS 七档，没有持续动画时静止停止绘制。设置和导入的皮肤自动保存。
+### 浅色控制台
 
-## v2.5 新增
+![浅色控制台：侧栏导航、卡片布局与系统字体](docs/images/console-light.png)
 
-Q 版小人、可选 DA 眨眼与扭腰、四种主手映射、喂食苹果、糖果色粗体浮字、音乐音符、可调戏、持续呼吸动画、系统深色模式及手动检查更新。
+### 深色控制台
 
-特别感谢 [zsyghxf](https://github.com/zsyghxf) 的 [PR #5](https://github.com/DLmember/Minecraft-Desktop-Pet/pull/5)，提供眨眼、Shift 动画与 Q 版模式的基础实现；DLmember 完成行为调整、冲突修复、界面整理及新增互动。逐项归属与完整变化见 [v2.5 发布说明](发布说明-v2.5.md)。
+![深色控制台：深色卡片和橙色操作反馈](docs/images/console-dark.png)
 
-完整操作见 [使用说明](使用说明.md)，版本变化见 [更新记录](CHANGELOG.md)。
+### 托盘快捷菜单
 
-## 隐私与网络
+<p>
+  <img src="docs/images/tray-quick-light.png" width="42%" alt="浅色托盘菜单：快捷操作" />
+  <img src="docs/images/tray-desktop-dark.png" width="42%" alt="深色托盘菜单：桌面设置" />
+</p>
 
-日常互动在本机处理，正式运行不记录输入文本、不上传按键。主动获取正版皮肤时连接 Mojang 的账号资料及纹理服务；点击“检查更新”时连接 GitHub。无需账号密码。开启音乐音符时仅在本机查询音频会话，不录音、不上传音频。
+### 交互与姿态设置
 
-## 从源码构建（macOS）
+<p>
+  <img src="docs/images/interaction-light.png" width="49%" alt="交互与动画设置" />
+  <img src="docs/images/custom-pose-dark.png" width="49%" alt="自定义姿态设置" />
+</p>
 
-本地移植复用原始 Rust 渲染、皮肤与动画，通过 Swift / AppKit 提供透明窗口、菜单栏、控制台及全局键盘互动，以及可选的井号聊天前缀替换。
-支持 macOS 12+，包含 Apple Silicon / Intel 通用架构；支持需辅助功能授权的 hyp 快速队伍聊天。
-2.4.12 的 macOS 功能补齐包括正版披风下载与显示、登录自启、0–120 秒延迟和五档渲染线程 QoS（macOS 调度机制，与 Windows 进程优先级并非完全等价）。
-完整操作说明参见 [macOS 说明](macos/使用说明-macOS.md)。
+### 滑块拖动修复
 
-构建需要 Xcode Command Line Tools、Swift 和 Rust stable：
+![Q版身体大小滑块拖动中的实际画面，无锯齿残影](docs/images/slider-drag.png)
 
-    rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    cargo test --manifest-path native/Cargo.toml --lib --locked
-    scripts/build-macos.sh /absolute/path/to/output
+控制台展示图由程序自身绘制路径导出；托盘和滑块图来自隔离测试中的实际屏幕截图，未使用概念稿。
 
-默认产物为 release/macos/Minecraft桌宠.app 及 ZIP。构建脚本使用本地临时签名，未进行 Apple 公证。
+## 本分支改进
+
+| 项目 | 当前效果 |
+| --- | --- |
+| 控制台布局 | 侧栏导航、分组卡片、橙色操作按钮，提供深浅主题 |
+| 五个设置页 | 外观与皮肤、交互与动画、桌面与性能、视线与角度、自定义姿态 |
+| 窗口尺寸 | 默认及最小客户区 **760×700 逻辑像素**，宽高可独立调大，支持最大化 |
+| 清晰度 | 自绘内容以三倍分辨率绘制后高质量缩采样，保留合适的文字大小 |
+| 系统字体 | 控制台和托盘读取 Windows 当前系统界面字体，并响应设置变化 |
+| 导航切换 | 批量更新控件与缓冲绘制，修复切页闪烁和缺块 |
+| 托盘菜单 | 快捷操作 / 桌面设置、分组子菜单、键盘导航、Esc 返回和外部点击关闭 |
+| 滑块 | 修复 Q 版身体大小滑钮的拖动残影，数值与百分比同步更新 |
+
+调整控制台大小不会改变桌宠本体大小。按钮和开关保留短时反馈；关闭 Windows 系统动画后立即切换。
+
+## 保留的桌宠功能
+
+- 导入 PNG 皮肤、通过正版 ID 获取皮肤与披风，支持经典和纤细手臂。
+- 站立、坐下、自定义姿态、Q 版身体比例、视线跟随与角度调整。
+- 键盘互动、挥手方式、喂食苹果、呼吸、调戏、打字浮现字符和音乐音符。
+- 置顶、鼠标穿透、大小与帧率调整、开机自启。
+
+上游特定皮肤动画仍需要对应皮肤资源。本次界面改动仅针对 Windows；仓库保留原有 macOS 源码，本次发布不提供新的 macOS 安装包。
 
 ## 从源码构建（Windows）
 
-Windows 原生 Rust + Win32 实现，使用 CPU 绘制透明方块模型，不包含浏览器运行时。
-
-1. 安装 Rust 的 `stable-x86_64-pc-windows-gnu` 工具链。
-2. 安装 x86_64 UCRT 版 [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw/releases)，其中需要 `clang++.exe`、`windres.exe` 和 `x86_64-w64-mingw32-gcc.exe`。
-3. 建议将项目放在不含中文或空格的路径，运行：
+需要 Rust `stable-x86_64-pc-windows-gnu` 及 x86_64 UCRT 版 [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw/releases)，其中应包含 `clang++`、`windres` 与 `x86_64-w64-mingw32-gcc`。
 
 ```powershell
+git clone --branch windows-ui-v4 https://github.com/Kevae12138/Minecraft-Desktop-Pet.git
+cd Minecraft-Desktop-Pet
 rustup toolchain install stable-x86_64-pc-windows-gnu
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -ToolchainBin C:\llvm-mingw\bin
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -Action test -ToolchainBin C:\llvm-mingw\bin
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -ToolchainBin D:\Software\llvm-mingw\bin
 ```
 
-产物：`native/target/release/minecraft-pet.exe`。脚本使用 Cargo.lock 锁定的依赖；首次构建需要网络下载依赖。可通过 `-RustToolchain` 选择已安装的 GNU 工具链版本。
+请将最后一行路径替换成自己的 LLVM-MinGW `bin` 路径。默认产物为 `native/target/release/minecraft-pet.exe`。首次构建需要下载 `Cargo.lock` 锁定的依赖。
 
-源码位于 `native/src`；首次启动预设位于 `native/default-settings.json`；内置皮肤及图标位于 `assets`。
+```powershell
+# 回归测试
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -Action test -ToolchainBin D:\Software\llvm-mingw\bin
+```
 
-## 许可
+源代码主要位于 `native/src`，预设位于 `native/default-settings.json`，内置皮肤与图标位于 `assets`。
 
-应用代码及项目原创示例皮肤采用 [MIT License](LICENSE)。依赖许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 `native/licenses/`。用户导入的皮肤不受本项目许可证覆盖，请尊重原作者授权。
+## 验证记录
+
+- Windows 二进制测试：**81 通过、1 项原有忽略、0 失败**。
+- 深浅主题、五页布局、最小尺寸、独立宽高调整、最大化与控件重叠检查通过。
+- 100 次控制台导航、80 次托盘切页以及二级菜单操作回归通过。
+- 左右拖动及键盘调节的实际屏幕图，与完整重绘后的图像一致，无滑钮残影。
+- 系统字体读取、DPI 缩放和字体设置通知检查通过。
+
+详见 [UI v4 中文说明](docs/UI-v4.zh-CN.md) 与 [界面自检报告](docs/verification/ui-self-test.json)。
+
+## 来源与致谢
+
+- 原项目：[DLmember/Minecraft-Desktop-Pet](https://github.com/DLmember/Minecraft-Desktop-Pet)，感谢原作者及贡献者。
+- 上游 Q 版模型等功能包含 [zsyghxf 的贡献](https://github.com/DLmember/Minecraft-Desktop-Pet/pull/5)，具体历史见 [CHANGELOG.md](CHANGELOG.md)。
+- 界面设计参考：[farion1231/cc-switch](https://github.com/farion1231/cc-switch)，相关 MIT 归属保留在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+应用代码遵循 [MIT License](LICENSE)。依赖许可证位于 `native/licenses`；运行包附有相应许可证。Windows 字体由系统提供，不分发字体文件。
+
+本项目为独立粉丝作品，与 Mojang Studios、Microsoft 或 CC Switch 无隶属、赞助或官方合作关系。Minecraft 名称、商标和相关游戏资源归各自权利人所有。

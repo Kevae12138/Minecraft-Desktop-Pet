@@ -3,7 +3,36 @@ use windows_sys::Win32::UI::Controls::Dialogs::*;
 const SLIDER_IDS: [i32; 10] = [200, 201, 202, 203, 204, 205, 206, 207, 211, 212];
 const SS_PATHELLIPSIS: u32 = 0x8000;
 const SS_RIGHT: u32 = 2;
-const TBM_GETPOS: u32 = WM_USER;
+pub(super) const TBM_GETPOS: u32 = WM_USER;
+pub(super) const PANEL_WIDTH: f32 = 760.;
+pub(super) const PANEL_HEIGHT: f32 = 700.;
+pub(super) const GLOBAL_PAGE: u8 = 255;
+const PANEL_STYLE: u32 = WS_OVERLAPPED
+    | WS_CAPTION
+    | WS_SYSMENU
+    | WS_MINIMIZEBOX
+    | WS_MAXIMIZEBOX
+    | WS_THICKFRAME
+    | WS_CLIPCHILDREN;
+
+// The default client size is also the minimum; fit it to small displays.
+pub(super) fn default_panel_scale(dpi: u32, work: [i32; 2], frame: [i32; 2]) -> f32 {
+    (dpi.max(96) as f32 / 96.)
+        .min((work[0] - frame[0] - 24).max(1) as f32 / PANEL_WIDTH)
+        .min((work[1] - frame[1] - 24).max(1) as f32 / PANEL_HEIGHT)
+        .max(0.25)
+}
+
+unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if APP.is_null() {
+        return DefWindowProcW(hwnd, msg, w, l);
+    }
+    if msg == WM_NCCREATE {
+        (*APP).panel = hwnd;
+    }
+    panel_proc(&mut *APP, hwnd, msg, w, l)
+}
+
 impl App {
     unsafe fn control(
         &mut self,
@@ -22,10 +51,10 @@ impl App {
             wide(class).as_ptr(),
             wide(text).as_ptr(),
             WS_CHILD | WS_VISIBLE | style,
-            (x as f32 * d) as i32,
-            (y as f32 * d) as i32,
-            (w as f32 * d) as i32,
-            (h as f32 * d) as i32,
+            (x as f32 * d).round() as i32,
+            (y as f32 * d).round() as i32,
+            (w as f32 * d).round() as i32,
+            (h as f32 * d).round() as i32,
             self.panel,
             id as usize as HMENU,
             GetModuleHandleW(null()),
@@ -33,11 +62,47 @@ impl App {
         );
         self.layout.push((hwnd, [x, y, w, h]));
         self.page_controls.push((hwnd, self.building_page));
-        SendMessageW(hwnd, WM_SETFONT, self.font as usize, 1);
+        SendMessageW(hwnd, WM_SETFONT, self.font as usize, 0);
         if id != 0 {
             self.controls.push((id, hwnd));
         }
+        if class.eq_ignore_ascii_case("BUTTON") {
+            self.panel_ui
+                .buttons
+                .insert(hwnd as usize, theme::ButtonMotion::default());
+            SetWindowSubclass(hwnd, Some(theme::control_proc), 1, 0);
+        }
+        if class == "EDIT" || class == "STATIC" {
+            SetWindowSubclass(hwnd, Some(theme::control_proc), 1, 0);
+        }
         hwnd
+    }
+    unsafe fn text(&mut self, text: &str, x: i32, y: i32, w: i32, role: theme::TextRole) -> HWND {
+        let hwnd = self.control("STATIC", text, 0x200, x, y, w, 24, 0);
+        self.panel_ui.roles.insert(hwnd as usize, role);
+        hwnd
+    }
+    unsafe fn section(&mut self, title: &str, y: i32) {
+        self.text(title, 192, y, 410, theme::TextRole::Section);
+    }
+    fn card(&mut self, y: i32, h: i32, separators: &[i32]) {
+        self.panel_ui.cards.push(theme::Card {
+            page: self.building_page,
+            bounds: [192, y, 544, h],
+            separators: separators.to_vec(),
+        });
+    }
+    unsafe fn switch_row(&mut self, text: &str, y: i32, id: i32) {
+        self.check(text, 208, y, 512, id);
+    }
+    unsafe fn value_slider(&mut self, label: &str, y: i32, id: i32, min: i32, max: i32) {
+        self.text(label, 208, y, 136, theme::TextRole::Body);
+        self.slider(id, 350, y - 2, 270, min, max);
+        let value_id = if id == 200 { 310 } else { 400 + id };
+        let hwnd = self.control("STATIC", "", SS_RIGHT | 0x200, 632, y, 88, 24, value_id);
+        self.panel_ui
+            .roles
+            .insert(hwnd as usize, theme::TextRole::Caption);
     }
     pub(super) unsafe fn show_panel(&mut self) {
         if !self.panel.is_null() {
@@ -46,287 +111,411 @@ impl App {
             return;
         }
         self.apply_theme();
+        self.panel_ui.clear_controls();
+        self.controls.clear();
+        self.layout.clear();
+        self.page_controls.clear();
         let class = wide("MinecraftDesktopPetSettings");
         let mut wc: WNDCLASSEXW = std::mem::zeroed();
         wc.cbSize = std::mem::size_of::<WNDCLASSEXW>() as u32;
-        wc.lpfnWndProc = Some(super::wndproc);
+        wc.lpfnWndProc = Some(panel_wndproc);
         wc.hInstance = GetModuleHandleW(null());
         wc.hIcon = self.icon;
         wc.hCursor = LoadCursorW(null_mut(), IDC_ARROW);
-        wc.hbrBackground = GetStockObject(WHITE_BRUSH) as HBRUSH;
         wc.lpszClassName = class.as_ptr();
         RegisterClassExW(&wc);
-        let d = self.panel_fit(
-            MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST),
-            self.dpi,
-        );
+        let monitor = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST);
+        let d = self.panel_default_scale(monitor, (self.dpi * 96.) as u32);
         self.panel_scale = d;
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: (760. * d) as i32,
-            bottom: (786. * d) as i32,
-        };
-        AdjustWindowRectExForDpi(
-            &mut rect,
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-            0,
-            0,
-            (d * 96.) as u32,
-        );
+        let frame = self.panel_frame((self.dpi * 96.) as u32);
         self.panel = CreateWindowExW(
-            WS_EX_ACCEPTFILES,
+            WS_EX_ACCEPTFILES | WS_EX_COMPOSITED,
             class.as_ptr(),
             wide(&format!("{} · 控制台", product_title())).as_ptr(),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            PANEL_STYLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
+            (PANEL_WIDTH * d).round() as i32 + frame[0],
+            (PANEL_HEIGHT * d).round() as i32 + frame[1],
             null_mut(),
             null_mut(),
             GetModuleHandleW(null()),
             null(),
         );
-        if !self.font.is_null() {
-            DeleteObject(self.font);
+        if self.panel.is_null() {
+            return;
         }
-        self.font = CreateFontW(
-            (-16. * d) as i32,
-            0,
-            0,
-            0,
-            400,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET as u32,
-            OUT_DEFAULT_PRECIS as u32,
-            CLIP_DEFAULT_PRECIS as u32,
-            CLEARTYPE_QUALITY as u32,
-            DEFAULT_PITCH as u32,
-            wide("Microsoft YaHei UI").as_ptr(),
-        );
-        self.controls.clear();
-        self.layout.clear();
-        self.page_controls.clear();
-        self.building_page = 3;
-        for (i, text) in ["常规", "视线与角度", "自定义姿态"].iter().enumerate() {
+        self.panel_ui.dpi = GetDpiForWindow(self.panel).max(96);
+        self.rebuild_panel_fonts();
+        self.building_page = GLOBAL_PAGE;
+        for (index, (page, title)) in [
+            (0, "外观与皮肤"),
+            (3, "交互与动画"),
+            (4, "桌面与性能"),
+            (1, "视线与角度"),
+            (2, "自定义姿态"),
+        ]
+        .iter()
+        .enumerate()
+        {
             self.control(
                 "BUTTON",
-                text,
+                title,
                 BS_RADIOBUTTON as u32 | BS_PUSHLIKE as u32 | WS_TABSTOP,
-                24 + i as i32 * 242,
-                16,
-                226,
+                12,
+                112 + index as i32 * 40,
+                144,
                 34,
-                150 + i as i32,
+                150 + *page,
             );
         }
+        self.control(
+            "BUTTON",
+            "项目主页",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            12,
+            582,
+            144,
+            32,
+            169,
+        );
+        self.control(
+            "BUTTON",
+            "检查更新",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            12,
+            624,
+            144,
+            32,
+            170,
+        );
+        self.status = self.control("STATIC", "所有更改已保存", 0x200, 212, 662, 510, 22, 320);
+        self.panel_ui
+            .roles
+            .insert(self.status as usize, theme::TextRole::Caption);
+
+        // Appearance: the original settings are regrouped without changing IDs
+        // or the command/persistence path used by the tray and the pet renderer.
         self.building_page = 0;
-        // General page: uniform 36px row pitch and aligned labels/inputs.
-        self.control("STATIC", "皮肤", 0, 24, 82, 110, 24, 0);
-        self.control("STATIC", "", SS_PATHELLIPSIS, 150, 82, 325, 24, 300);
-        self.control("BUTTON", "导入皮肤…", BS_PUSHBUTTON as u32 | WS_TABSTOP, 490, 76, 120, 30, 101);
-        self.control("BUTTON", "恢复内置", BS_PUSHBUTTON as u32 | WS_TABSTOP, 624, 76, 110, 30, 102);
-        self.control("STATIC", "正版 ID", 0, 24, 118, 110, 24, 331);
-        let input = self.control("EDIT", &self.online_id.clone(), WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32, 150, 112, 325, 30, 330);
+        self.section("角色皮肤", 96);
+        self.card(128, 164, &[92]);
+        self.text("当前皮肤", 208, 142, 320, theme::TextRole::Caption);
+        let name = self.control(
+            "STATIC",
+            "",
+            SS_PATHELLIPSIS | 0x200,
+            208,
+            166,
+            360,
+            26,
+            300,
+        );
+        self.panel_ui
+            .roles
+            .insert(name as usize, theme::TextRole::Section);
+        self.text(
+            "支持 PNG 皮肤，也可以直接拖入窗口",
+            208,
+            194,
+            365,
+            theme::TextRole::Caption,
+        );
+        self.control(
+            "BUTTON",
+            "导入皮肤…",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            594,
+            146,
+            126,
+            32,
+            101,
+        );
+        self.control(
+            "BUTTON",
+            "恢复内置",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            594,
+            190,
+            126,
+            28,
+            102,
+        );
+        self.text("正版 ID", 208, 231, 62, theme::TextRole::Body);
+        let input = self.control(
+            "EDIT",
+            &self.online_id.clone(),
+            WS_TABSTOP | ES_AUTOHSCROLL as u32,
+            282,
+            235,
+            280,
+            22,
+            330,
+        );
         SendMessageW(input, EM_SETLIMITTEXT, 36, 0);
-        SendMessageW(input, 0x1501, 0, wide("Java 版用户名或 UUID").as_ptr() as isize);
-        self.control("BUTTON", "获取皮肤", BS_PUSHBUTTON as u32 | WS_TABSTOP, 490, 112, 120, 30, 104);
-        self.control("STATIC", "无需登录", 0, 624, 118, 110, 24, 332);
-        self.control("STATIC", &self.online_notice.clone(), 0, 150, 154, 584, 24, 333);
-        self.control("STATIC", "手臂", 0, 24, 178, 110, 24, 0);
-        self.radio("经典（4 px）", 150, 174, 155, 114);
-        self.radio("纤细（3 px）", 330, 174, 155, 115);
-        self.control("STATIC", "外观", 0, 24, 210, 110, 24, 0);
-        self.check("显示皮肤外层", 150, 206, 220, 124);
-        self.check("Q 版小人", 490, 206, 220, 139);
-        self.control("STATIC", "姿势", 0, 24, 242, 110, 24, 0);
-        self.radio("站立", 150, 238, 100, 110);
-        self.radio("坐下", 260, 238, 100, 111);
-        self.radio("自定义", 370, 238, 115, 116);
-        self.control("STATIC", "站立时按住 Shift 潜行", 0, 490, 242, 244, 24, 0);
-        self.control("STATIC", "敲字", 0, 24, 274, 110, 24, 0);
-        self.radio("精准按键", 150, 270, 155, 112);
-        self.radio("双手交替", 330, 270, 155, 113);
-        self.control("STATIC", "坐姿下响应键盘", 0, 490, 274, 244, 24, 0);
-        self.control("STATIC", "主手", 0, 24, 306, 110, 24, 0);
-        self.radio("右手挥动", 150, 302, 140, 118);
-        self.radio("左手挥动", 295, 302, 140, 119);
-        self.radio("实际映射", 440, 302, 140, 165);
-        self.radio("反向映射", 585, 302, 149, 166);
-        self.control("STATIC", "桌面", 0, 24, 338, 110, 24, 0);
-        self.check("保持置顶", 150, 334, 150, 120);
-        self.check("完全鼠标穿透", 330, 334, 220, 121);
-        self.control("BUTTON", "找回桌宠", BS_PUSHBUTTON as u32 | WS_TABSTOP, 594, 332, 140, 30, 130);
-        self.control("STATIC", "键盘", 0, 24, 370, 110, 24, 0);
-        self.check("全局键盘互动", 150, 366, 170, 122);
-        self.check("hyp快速队伍聊天", 330, 366, 220, 137);
-        self.control("STATIC", "# → /p chat", 0, 555, 370, 179, 24, 0);
-        self.control("STATIC", "动画", 0, 24, 402, 110, 24, 0);
-        self.check("DA眨眼（需修改过皮肤）", 150, 398, 298, 163);
-        self.check("DA扭腰", 450, 398, 120, 164);
-        self.check("敲字浮现字", 580, 398, 154, 167);
-        self.control("STATIC", "大小", 0, 24, 466, 110, 24, 0);
-        self.slider(200, 150, 462, 490, 65, 180);
-        self.control("STATIC", "", SS_RIGHT, 650, 466, 84, 24, 310);
-        self.control("STATIC", "帧率", 0, 24, 498, 110, 24, 0);
-        self.slider(207, 150, 494, 490, 0, 6);
-        self.control("STATIC", "", SS_RIGHT, 650, 498, 84, 24, 607);
-        self.control("STATIC", "打字压低", 0, 24, 530, 120, 24, 0);
-        self.slider(211, 150, 526, 490, 0, 30);
-        self.control("STATIC", "", SS_RIGHT, 650, 530, 84, 24, 611);
-        self.control("STATIC", "Q版身体大小", 0, 24, 562, 125, 24, 0);
-        self.slider(212, 150, 558, 490, 50, 180);
-        self.control("STATIC", "", SS_RIGHT, 650, 562, 84, 24, 612);
-        self.control("STATIC", "其他", 0, 24, 594, 110, 24, 0);
-        self.check("显示正版披风", 150, 590, 220, 138);
-        self.check("随 Windows 登录自动启动", 430, 590, 304, 160);
-        self.control("STATIC", "音乐", 0, 24, 626, 110, 24, 0);
-        self.check("播放音乐时冒音符", 150, 622, 260, 171);
-        self.check("可调戏", 150, 430, 150, 172);
-        self.check("呼吸动画", 330, 430, 155, 173);
-        self.control("STATIC", "开启后持续轻微呼吸", 0, 490, 434, 244, 24, 0);
+        SendMessageW(
+            input,
+            0x1501,
+            0,
+            wide("Java 用户名或 UUID").as_ptr() as isize,
+        );
+        self.control(
+            "BUTTON",
+            "获取皮肤",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            594,
+            230,
+            126,
+            30,
+            104,
+        );
+        let notice = self.control(
+            "STATIC",
+            &self.online_notice.clone(),
+            SS_PATHELLIPSIS | 0x200,
+            208,
+            263,
+            512,
+            22,
+            333,
+        );
+        self.panel_ui
+            .roles
+            .insert(notice as usize, theme::TextRole::Caption);
+        self.section("模型", 308);
+        self.card(340, 52, &[]);
+        self.text("手臂模型", 208, 354, 170, theme::TextRole::Body);
+        self.radio("经典 · 4 px", 430, 353, 140, 114);
+        self.radio("纤细 · 3 px", 578, 353, 142, 115);
+        self.section("显示效果", 408);
+        self.card(440, 176, &[40, 80, 120]);
+        self.switch_row("显示皮肤外层", 448, 124);
+        self.switch_row("显示正版披风", 488, 138);
+        self.switch_row("Q 版小人", 528, 139);
+        self.value_slider("Q 版身体大小", 582, 212, 50, 180);
+
+        self.building_page = 3;
+        self.section("姿势与输入", 96);
+        self.card(128, 144, &[48, 96]);
+        self.text("默认姿势", 208, 143, 118, theme::TextRole::Body);
+        self.radio("站立", 408, 140, 96, 110);
+        self.radio("坐下", 516, 140, 96, 111);
+        self.radio("自定义", 624, 140, 96, 116);
+        self.text("敲字动作", 208, 191, 130, theme::TextRole::Body);
+        self.radio("精准按键", 430, 188, 140, 112);
+        self.radio("双手交替", 578, 188, 142, 113);
+        self.text("挥手方式", 208, 239, 86, theme::TextRole::Body);
+        for (id, label, x) in [
+            (118, "右手", 300),
+            (119, "左手", 408),
+            (165, "实际映射", 516),
+            (166, "反向映射", 624),
+        ] {
+            self.radio(label, x, 236, 96, id);
+        }
+        self.section("互动与动画", 288);
+        self.card(320, 288, &[36, 72, 108, 144, 180, 216, 252]);
+        for (index, (id, label)) in [
+            (122, "全局键盘互动"),
+            (137, "hyp 快速队伍聊天"),
+            (163, "DA 眨眼 · 需要适配皮肤"),
+            (164, "DA 扭腰"),
+            (167, "敲字浮现字"),
+            (173, "呼吸动画"),
+            (172, "可调戏"),
+            (171, "播放音乐时冒音符"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            self.switch_row(label, 324 + index as i32 * 36, *id);
+        }
+        self.text(
+            "站立时按住 Shift 潜行；坐下时跟随键盘敲字。",
+            192,
+            620,
+            544,
+            theme::TextRole::Caption,
+        );
+
+        self.building_page = 4;
+        self.section("桌面行为", 96);
+        self.card(128, 120, &[40, 80]);
+        self.switch_row("保持置顶", 134, 120);
+        self.switch_row("完全鼠标穿透", 174, 121);
+        self.switch_row("随 Windows 登录自动启动", 214, 160);
+        self.section("显示与性能", 264);
+        self.card(296, 180, &[60, 120]);
+        self.value_slider("桌宠大小", 314, 200, 65, 180);
+        self.value_slider("渲染帧率", 374, 207, 0, 6);
+        self.value_slider("打字压低幅度", 434, 211, 0, 30);
+        self.section("窗口", 492);
+        self.card(524, 90, &[]);
+        self.text(
+            "自由调整控制台大小",
+            208,
+            536,
+            320,
+            theme::TextRole::Section,
+        );
+        self.text(
+            "宽高可分别调整，窗口不能小于默认大小。",
+            208,
+            562,
+            360,
+            theme::TextRole::Caption,
+        );
+        self.control(
+            "BUTTON",
+            "找回桌宠",
+            BS_PUSHBUTTON as u32 | WS_TABSTOP,
+            594,
+            582,
+            126,
+            28,
+            130,
+        );
+        self.text(
+            "关闭控制台后，桌宠仍会继续运行。",
+            192,
+            620,
+            544,
+            theme::TextRole::Caption,
+        );
+
         self.building_page = 1;
-        self.control("STATIC", "整体角度偏移", 0, 24, 78, 280, 24, 0);
+        self.section("整体角度", 96);
+        self.card(128, 144, &[48, 96]);
         self.control(
             "BUTTON",
             "角度归零",
             BS_PUSHBUTTON as u32 | WS_TABSTOP,
-            624,
-            72,
+            626,
+            92,
             110,
-            30,
+            28,
             133,
         );
-        for (i, label) in ["前后俯仰 · X", "左右转向 · Y", "左右倾斜 · Z"]
+        for (axis, label) in ["前后俯仰 · X", "左右转向 · Y", "左右倾斜 · Z"]
             .iter()
             .enumerate()
         {
-            let y = 122 + i as i32 * 43;
-            self.control("STATIC", label, 0, 24, y, 160, 24, 0);
-            self.slider(208 + i as i32, 180, y - 3, 445, -180, 180);
-            self.control("STATIC", "", SS_RIGHT, 636, y, 98, 24, 608 + i as i32);
+            self.value_slider(label, 140 + axis as i32 * 48, 208 + axis as i32, -180, 180);
         }
-        self.check("视线跟随鼠标", 24, 268, 240, 123);
+        self.section("视线跟随", 288);
+        self.card(320, 300, &[40]);
         self.control(
             "BUTTON",
             "跟随复位",
             BS_PUSHBUTTON as u32 | WS_TABSTOP,
-            624,
-            264,
+            626,
+            284,
             110,
-            30,
+            28,
             132,
         );
-        self.control("STATIC", "水平 · 左右", 0, 24, 314, 240, 24, 0);
-        self.control("STATIC", "垂直 · 上下", 0, 400, 314, 240, 24, 0);
-        for (col, base) in [(24, 201), (400, 204)] {
+        self.switch_row("视线跟随鼠标", 326, 123);
+        for (x, base, title) in [(208, 201, "水平 · 左右"), (478, 204, "垂直 · 上下")] {
+            self.text(title, x, 370, 226, theme::TextRole::Section);
             for (row, label) in ["灵敏度", "转动范围", "中心偏移"].iter().enumerate() {
-                let y = 356 + row as i32 * 62;
+                let y = 408 + row as i32 * 56;
                 let id = base + row as i32;
-                self.control("STATIC", label, 0, col, y, 160, 22, 0);
-                self.control("STATIC", "", SS_RIGHT, col + 235, y, 95, 22, 400 + id);
+                self.text(label, x, y, 130, theme::TextRole::Body);
+                let value = self.control(
+                    "STATIC",
+                    "",
+                    SS_RIGHT | 0x200,
+                    x + 136,
+                    y,
+                    100,
+                    24,
+                    400 + id,
+                );
+                self.panel_ui
+                    .roles
+                    .insert(value as usize, theme::TextRole::Caption);
                 let (min, max) = match row {
                     0 => (0, 300),
                     1 => (0, 170),
                     _ => (-60, 60),
                 };
-                self.slider(id, col, y + 23, 330, min, max);
+                self.slider(id, x, y + 26, 236, min, max);
             }
         }
-        self.control("STATIC", "负值偏左，正值偏右", 0, 24, 550, 335, 24, 0);
-        self.control("STATIC", "负值抬头，正值低头", 0, 400, 550, 335, 24, 0);
+        self.text(
+            "负值偏左 / 抬头，正值偏右 / 低头。",
+            208,
+            588,
+            512,
+            theme::TextRole::Caption,
+        );
 
         self.building_page = 2;
-        self.radio("使用自定义姿态", 24, 74, 230, 117);
-        self.radio("站姿", 300, 74, 110, 135);
-        self.radio("坐姿", 425, 74, 110, 136);
+        self.section("姿态模式", 96);
+        self.card(128, 90, &[]);
+        self.radio("使用自定义姿态", 208, 140, 242, 117);
+        self.radio("站姿", 508, 140, 96, 135);
+        self.radio("坐姿", 624, 140, 96, 136);
+        self.text(
+            "站姿与坐姿分别保存；坐姿在默认动作上调整。",
+            208,
+            180,
+            512,
+            theme::TextRole::Caption,
+        );
+        self.section("关节角度", 234);
+        self.card(266, 300, &[40, 82, 124, 166, 208, 250]);
         self.control(
             "BUTTON",
             "姿态归零",
             BS_PUSHBUTTON as u32 | WS_TABSTOP,
-            624,
-            72,
+            626,
+            230,
             110,
-            30,
+            28,
             134,
         );
-        self.control(
-            "STATIC",
-            "站姿和坐姿分别保存；坐姿角度在默认坐姿上调整。",
-            0,
-            24,
-            116,
-            710,
-            24,
-            0,
-        );
-        for (axis, label) in ["前后旋转 · X", "左右旋转 · Y", "侧向旋转 · Z"]
-            .iter()
-            .enumerate()
-        {
-            self.control("STATIC", label, 0, 120 + axis as i32 * 205, 164, 200, 24, 0);
+        for (axis, label) in ["前后 · X", "左右 · Y", "侧向 · Z"].iter().enumerate() {
+            self.text(
+                label,
+                288 + axis as i32 * 144,
+                276,
+                136,
+                theme::TextRole::Caption,
+            );
         }
         for (row, name) in ["头部", "身体", "左臂", "右臂", "左腿", "右腿"]
             .iter()
             .enumerate()
         {
-            let y = 214 + row as i32 * 54;
-            self.control("STATIC", name, 0, 24, y, 90, 24, 0);
+            let y = 312 + row as i32 * 42;
+            self.text(name, 208, y, 66, theme::TextRole::Body);
             for axis in 0..3 {
                 let id = 220 + row as i32 * 3 + axis;
-                let x = 112 + axis * 205;
-                self.slider(id, x, y - 3, 135, -180, 180);
-                self.control("STATIC", "", SS_RIGHT, x + 137, y, 60, 24, id + 400);
+                let x = 282 + axis * 144;
+                self.slider(id, x, y - 2, 86, -180, 180);
+                let value =
+                    self.control("STATIC", "", SS_RIGHT | 0x200, x + 88, y, 50, 24, id + 400);
+                self.panel_ui
+                    .roles
+                    .insert(value as usize, theme::TextRole::Caption);
             }
         }
-        self.control(
-            "STATIC",
-            "坐姿支持敲字、长按和挥手；互动结束回到所设姿态。",
-            0,
-            24,
-            554,
-            710,
-            24,
-            0,
+        self.text(
+            "坐姿支持敲字、长按与挥手，互动后回到设定姿态。",
+            192,
+            586,
+            544,
+            theme::TextRole::Caption,
         );
-        self.control(
-            "STATIC",
-            "头部角度在关闭视线跟随后生效；不弯曲肢体。",
-            0,
-            24,
-            580,
-            710,
-            24,
-            0,
+        self.text(
+            "关闭视线跟随后，头部角度才会生效。",
+            192,
+            614,
+            544,
+            theme::TextRole::Caption,
         );
-
-        self.building_page = 3;
-        self.control("BUTTON", "检查更新", BS_PUSHBUTTON as u32 | WS_TABSTOP, 24, 690, 120, 30, 170);
-        self.control("BUTTON", "GitHub", BS_PUSHBUTTON as u32 | WS_TABSTOP, 614, 690, 120, 30, 169);
-        self.status = self.control("STATIC", "已保存", 0, 24, 738, 465, 24, 320);
-        self.control(
-            "STATIC",
-            "由GPT 6 Astra制作",
-            SS_RIGHT,
-            490,
-            738,
-            244,
-            24,
-            0,
-        );
-        self.control(
-            "STATIC",
-            "拖动摆放 · 右键菜单 · 双击设置；关闭此窗口不会退出桌宠。",
-            0,
-            24,
-            764,
-            710,
-            22,
-            0,
-        );
+        self.building_page = GLOBAL_PAGE;
+        self.rebuild_panel_fonts();
         self.apply_theme();
         self.show_page(self.panel_page);
         self.refresh_panel();
@@ -335,22 +524,38 @@ impl App {
         SetForegroundWindow(self.panel);
     }
     pub(super) unsafe fn show_page(&mut self, page: u8) {
-        self.panel_page = page.min(2);
-        for &(hwnd, owner) in &self.page_controls {
-            ShowWindow(
-                hwnd,
-                if owner == 3 || owner == self.panel_page {
-                    SW_SHOW
-                } else {
-                    SW_HIDE
-                },
-            );
+        let page = page.min(4);
+        self.panel_page = page;
+        let visible = IsWindowVisible(self.panel) != 0;
+        if visible {
+            SendMessageW(self.panel, WM_SETREDRAW, 0, 0);
         }
-        for i in 0..3 {
+        let mut batch = BeginDeferWindowPos(self.page_controls.len() as i32);
+        for &(hwnd, owner) in &self.page_controls {
+            let show = owner == GLOBAL_PAGE || owner == page;
+            if (GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_VISIBLE != 0) == show {
+                continue;
+            }
+            let flags = SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOACTIVATE
+                | SWP_NOREDRAW
+                | if show { SWP_SHOWWINDOW } else { SWP_HIDEWINDOW };
+            if !batch.is_null() {
+                batch = DeferWindowPos(batch, hwnd, null_mut(), 0, 0, 0, 0, flags);
+            } else {
+                SetWindowPos(hwnd, null_mut(), 0, 0, 0, 0, flags);
+            }
+        }
+        if !batch.is_null() {
+            EndDeferWindowPos(batch);
+        }
+        for i in 0..5 {
             SendMessageW(
                 self.ctrl(150 + i),
                 BM_SETCHECK,
-                if i == self.panel_page as i32 {
+                if i == page as i32 {
                     BST_CHECKED as usize
                 } else {
                     BST_UNCHECKED as usize
@@ -358,82 +563,123 @@ impl App {
                 0,
             );
         }
-        if !self.panel.is_null() {
-            InvalidateRect(self.panel, null(), 1);
+        // WM_SETREDRAW(TRUE) also adds WS_VISIBLE, so do not send it to a
+        // hidden console while initializing or exporting diagnostic images.
+        if visible {
+            SendMessageW(self.panel, WM_SETREDRAW, 1, 0);
         }
+        RedrawWindow(
+            self.panel,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+        );
     }
-    unsafe fn panel_fit(&self, monitor: HMONITOR, dpi: f32) -> f32 {
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        GetMonitorInfoW(monitor, &mut info);
-        dpi.min((info.rcWork.right - info.rcWork.left - 32) as f32 / 780.)
-            .min((info.rcWork.bottom - info.rcWork.top - 64) as f32 / 796.)
-    }
-    unsafe fn panel_dpi(&mut self, hwnd: HWND, w: WPARAM, l: LPARAM) {
-        let p = *(l as *const RECT);
-        let dpi = (w & 0xffff) as f32 / 96.;
-        let monitor = MonitorFromRect(&p, MONITOR_DEFAULTTONEAREST);
-        let d = self.panel_fit(monitor, dpi);
-        self.panel_scale = d;
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: (760. * d) as i32,
-            bottom: (786. * d) as i32,
-        };
+    unsafe fn panel_frame(&self, dpi: u32) -> [i32; 2] {
+        let mut rect: RECT = std::mem::zeroed();
         AdjustWindowRectExForDpi(
             &mut rect,
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            PANEL_STYLE,
             0,
-            0,
-            (dpi * 96.) as u32,
+            WS_EX_ACCEPTFILES | WS_EX_COMPOSITED,
+            dpi.max(96),
         );
+        [rect.right - rect.left, rect.bottom - rect.top]
+    }
+    pub(super) unsafe fn panel_default_scale(&self, monitor: HMONITOR, dpi: u32) -> f32 {
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return dpi.max(96) as f32 / 96.;
+        }
+        default_panel_scale(
+            dpi,
+            [
+                info.rcWork.right - info.rcWork.left,
+                info.rcWork.bottom - info.rcWork.top,
+            ],
+            self.panel_frame(dpi),
+        )
+    }
+    unsafe fn panel_resize(&mut self) {
+        if self.panel.is_null() || IsIconic(self.panel) != 0 {
+            return;
+        }
+        let mut client: RECT = std::mem::zeroed();
+        GetClientRect(self.panel, &mut client);
+        if client.right <= 0 || client.bottom <= 0 {
+            return;
+        }
+        let dpi = GetDpiForWindow(self.panel).max(96);
+        let scale =
+            self.panel_default_scale(MonitorFromWindow(self.panel, MONITOR_DEFAULTTONEAREST), dpi);
+        self.panel_scale = scale;
+        self.panel_ui.dpi = dpi;
+        self.panel_ui.client = [client.right, client.bottom];
+        let mut batch = BeginDeferWindowPos(self.layout.len() as i32);
+        for &(hwnd, bounds) in &self.layout {
+            let r = self.panel_rect(bounds);
+            if !batch.is_null() {
+                batch = DeferWindowPos(
+                    batch,
+                    hwnd,
+                    null_mut(),
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            } else {
+                SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
+        if !batch.is_null() {
+            EndDeferWindowPos(batch);
+        }
+        self.rebuild_panel_fonts();
+        RedrawWindow(
+            self.panel,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+        );
+    }
+    unsafe fn panel_dpi(&mut self, hwnd: HWND, w: WPARAM, l: LPARAM) {
+        if l == 0 {
+            return;
+        }
+        let proposed = *(l as *const RECT);
+        let dpi = (w & 0xffff) as u32;
+        let frame = self.panel_frame(dpi);
+        let minimum =
+            self.panel_default_scale(MonitorFromRect(&proposed, MONITOR_DEFAULTTONEAREST), dpi);
+        self.panel_ui.dpi = dpi;
         SetWindowPos(
             hwnd,
             null_mut(),
-            p.left,
-            p.top,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
+            proposed.left,
+            proposed.top,
+            (proposed.right - proposed.left).max((PANEL_WIDTH * minimum).round() as i32 + frame[0]),
+            (proposed.bottom - proposed.top)
+                .max((PANEL_HEIGHT * minimum).round() as i32 + frame[1]),
             SWP_NOZORDER | SWP_NOACTIVATE,
         );
-        let font = CreateFontW(
-            (-16. * d) as i32,
-            0,
-            0,
-            0,
-            400,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET as u32,
-            OUT_DEFAULT_PRECIS as u32,
-            CLIP_DEFAULT_PRECIS as u32,
-            CLEARTYPE_QUALITY as u32,
-            DEFAULT_PITCH as u32,
-            wide("Microsoft YaHei UI").as_ptr(),
-        );
-        for &(h, [x, y, ww, hh]) in &self.layout {
-            SendMessageW(h, WM_SETFONT, font as usize, 1);
-            SetWindowPos(
-                h,
-                null_mut(),
-                (x as f32 * d) as i32,
-                (y as f32 * d) as i32,
-                (ww as f32 * d) as i32,
-                (hh as f32 * d) as i32,
-                SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
-        DeleteObject(self.font);
-        self.font = font;
-        InvalidateRect(hwnd, null(), 1);
+        self.panel_resize();
     }
     pub(super) unsafe fn github_icon(&mut self) {
         let size = (18. * self.panel_scale).round() as i32;
         let icon = LoadImageW(
             GetModuleHandleW(null()),
-            (if self.panel_dark {3usize}else{2usize}) as *const u16,
+            (if self.panel_dark { 3usize } else { 2usize }) as *const u16,
             IMAGE_ICON,
             size,
             size,
@@ -475,7 +721,7 @@ impl App {
         self.control(
             "BUTTON",
             text,
-            BS_RADIOBUTTON as u32 | WS_TABSTOP,
+            BS_RADIOBUTTON as u32 | BS_PUSHLIKE as u32 | WS_TABSTOP,
             x,
             y,
             w,
@@ -627,7 +873,15 @@ impl App {
                 SetWindowTextW(self.ctrl(id + 400), wide(&format!("{value:+}°")).as_ptr());
             }
         }
-        SetWindowTextW(self.status, wide(&self.notice).as_ptr());
+        SetWindowTextW(
+            self.status,
+            wide(if self.notice.is_empty() || self.notice == "已保存" {
+                "所有更改已保存"
+            } else {
+                &self.notice
+            })
+            .as_ptr(),
+        );
     }
     unsafe fn slide(&mut self, hwnd: HWND, tracking: bool) {
         let id = GetDlgCtrlID(hwnd);
@@ -762,8 +1016,10 @@ impl App {
                 }
                 .into();
                 self.changed();
-                self.online_notice =
-                    format!("已获取 {} 的皮肤{cape_notice}，已自动识别手臂类型。", result.name);
+                self.online_notice = format!(
+                    "已获取 {} 的皮肤{cape_notice}，已自动识别手臂类型。",
+                    result.name
+                );
             }
             Err(e) => self.online_notice = e,
         }
@@ -798,8 +1054,43 @@ pub(super) unsafe fn panel_proc(
     w: WPARAM,
     l: LPARAM,
 ) -> LRESULT {
-    if let Some(result)=a.theme_message(hwnd,msg,w,l) {return result;}
+    if let Some(result) = a.theme_message(hwnd, msg, w, l) {
+        return result;
+    }
     match msg {
+        WM_GETMINMAXINFO => {
+            // Keep DefWindowProc's normal maximize bounds; width and height
+            // have independent minimums rather than an aspect constraint.
+            let result = DefWindowProcW(hwnd, msg, w, l);
+            if l != 0 {
+                let limits = &mut *(l as *mut MINMAXINFO);
+                let dpi = GetDpiForWindow(hwnd).max(96);
+                let frame = a.panel_frame(dpi);
+                let minimum =
+                    a.panel_default_scale(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), dpi);
+                limits.ptMinTrackSize = POINT {
+                    x: (PANEL_WIDTH * minimum).round() as i32 + frame[0],
+                    y: (PANEL_HEIGHT * minimum).round() as i32 + frame[1],
+                };
+            }
+            result
+        }
+        WM_SIZE => {
+            a.panel_resize();
+            0
+        }
+        WM_ENTERSIZEMOVE => 0,
+        WM_EXITSIZEMOVE => {
+            a.panel_resize();
+            if a.diagnostic {
+                diagnostic_snapshot(a);
+            }
+            0
+        }
+        WM_TIMER if w == theme::ANIMATION_TIMER => {
+            a.panel_animation_tick();
+            0
+        }
         WM_COMMAND => {
             let id = (w & 0xffff) as u32;
             a.command(id);
@@ -808,6 +1099,10 @@ pub(super) unsafe fn panel_proc(
         WM_HSCROLL => {
             if l != 0 {
                 a.slide(l as HWND, (w & 0xffff) as u32 == TB_THUMBTRACK);
+                // The antialiased round thumb extends beyond the native
+                // trackbar's narrow thumb rectangle. Clear the entire control
+                // on movement so native partial invalidation cannot leave arcs.
+                InvalidateRect(l as HWND, null(), 0);
             }
             0
         }
@@ -847,6 +1142,8 @@ pub(super) unsafe fn panel_proc(
             0
         }
         WM_DESTROY => {
+            KillTimer(hwnd, theme::ANIMATION_TIMER);
+            a.panel_ui.clear_controls();
             a.panel = null_mut();
             a.status = null_mut();
             a.controls.clear();
@@ -873,7 +1170,450 @@ pub(super) unsafe fn diagnostic_init(a: &mut App) {
     a.show_panel();
     diagnostic_snapshot(a);
 }
+unsafe fn save_panel_image(a: &App, name: &str) -> Result<(), String> {
+    let surface = a.capture_panel().ok_or("控制台图像缓冲区创建失败")?;
+    GdiFlush();
+    let pixels =
+        std::slice::from_raw_parts(surface.bits, surface.w as usize * surface.h as usize * 4);
+    let mut rgba = Vec::with_capacity(pixels.len());
+    for pixel in pixels.chunks_exact(4) {
+        rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+    }
+    image::save_buffer(
+        a.store.dir.join(name),
+        &rgba,
+        surface.w as u32,
+        surface.h as u32,
+        image::ColorType::Rgba8,
+    )
+    .map_err(|e| e.to_string())
+}
+
+// Runs only with an explicitly isolated diagnostic profile. Exercise the real
+// Win32 controls, message routing and layout, then export their own rendering.
+unsafe fn capture_presented_control(hwnd: HWND, path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let mut rect: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return Err("无法读取滑块位置".into());
+    }
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    let surface = Surface::new(width, height);
+    let screen = GetDC(null_mut());
+    if surface.bits.is_null() || screen.is_null() {
+        if !screen.is_null() {
+            ReleaseDC(null_mut(), screen);
+        }
+        return Err("无法读取滑块屏幕像素".into());
+    }
+    GdiFlush();
+    windows_sys::Win32::Graphics::Dwm::DwmFlush();
+    let copied = BitBlt(
+        surface.dc,
+        0,
+        0,
+        width,
+        height,
+        screen,
+        rect.left,
+        rect.top,
+        SRCCOPY | CAPTUREBLT,
+    );
+    ReleaseDC(null_mut(), screen);
+    GdiFlush();
+    if copied == 0 {
+        return Err("滑块屏幕截图失败".into());
+    }
+    let mut rgba = std::slice::from_raw_parts(surface.bits, (width * height * 4) as usize).to_vec();
+    for p in rgba.chunks_exact_mut(4) {
+        p.swap(0, 2);
+        p[3] = 255;
+    }
+    image::save_buffer(
+        path,
+        &rgba,
+        width as u32,
+        height as u32,
+        image::ColorType::Rgba8,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(rgba)
+}
+
+unsafe fn verify_slider_repaint(a: &App, slider: HWND, tag: &str) -> Result<(), String> {
+    let before = capture_presented_control(slider, &a.store.dir.join(format!("slider-{tag}.png")))?;
+    RedrawWindow(
+        slider,
+        null(),
+        null_mut(),
+        RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW,
+    );
+    let after = capture_presented_control(
+        slider,
+        &a.store.dir.join(format!("slider-{tag}-repaint.png")),
+    )?;
+    let changed = before
+        .chunks_exact(4)
+        .zip(after.chunks_exact(4))
+        .filter(|(x, y)| x[..3] != y[..3])
+        .count();
+    if changed > 8 {
+        return Err(format!(
+            "Q版大小滑块残影 ({tag}): 全量重绘改变 {changed} 个像素"
+        ));
+    }
+    Ok(())
+}
+
+unsafe fn slider_drag_self_test(a: &mut App) -> Result<(), String> {
+    const LEFT_BUTTON_DOWN: WPARAM = 0x0001; // MK_LBUTTON in mouse-message wParam.
+    let original = (a.settings.chibi, a.settings.chibi_body_scale);
+    a.settings.chibi = true;
+    a.show_page(0);
+    a.refresh_panel();
+    let slider = a.ctrl(212);
+    SetForegroundWindow(a.panel);
+    SetFocus(slider);
+    SendMessageW(
+        a.panel,
+        WM_CHANGEUISTATE,
+        (UIS_CLEAR | (UISF_HIDEFOCUS << 16)) as usize,
+        0,
+    );
+    for dark in [false, true] {
+        a.theme_override = Some(dark);
+        a.apply_theme();
+        SendMessageW(slider, TBM_SETPOS, 1, 100);
+        RedrawWindow(
+            a.panel,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+        );
+        let mut channel: RECT = std::mem::zeroed();
+        SendMessageW(
+            slider,
+            TBM_GETCHANNELRECT,
+            0,
+            &mut channel as *mut _ as isize,
+        );
+        let tag = if dark { "dark" } else { "light" };
+        for (direction, end) in [("right", channel.right - 8), ("left", channel.left + 8)] {
+            let mut thumb: RECT = std::mem::zeroed();
+            SendMessageW(slider, TBM_GETTHUMBRECT, 0, &mut thumb as *mut _ as isize);
+            let y = (thumb.top + thumb.bottom) / 2;
+            let start = (thumb.left + thumb.right) / 2;
+            let coords = |x: i32| ((y as u32) << 16 | (x as u32 & 0xffff)) as isize;
+            SendMessageW(slider, WM_LBUTTONDOWN, LEFT_BUTTON_DOWN, coords(start));
+            let step = if end >= start { 1 } else { -1 };
+            let mut x = start;
+            while x != end {
+                x += step;
+                SendMessageW(slider, WM_MOUSEMOVE, LEFT_BUTTON_DOWN, coords(x));
+                UpdateWindow(slider);
+            }
+            // Compare while still dragging: mouse-up/refresh must not conceal
+            // trails that were visible during the gesture.
+            let result = verify_slider_repaint(a, slider, &format!("{tag}-{direction}"));
+            SendMessageW(slider, WM_LBUTTONUP, 0, coords(end));
+            result?;
+            let value = SendMessageW(slider, TBM_GETPOS, 0, 0) as i32;
+            if value == 100 || a.settings.chibi_body_scale as i32 != value {
+                return Err("拖动未更新 Q 版身体大小".into());
+            }
+            let mut label = [0u16; 32];
+            let len = GetWindowTextW(a.ctrl(612), label.as_mut_ptr(), label.len() as i32);
+            if String::from_utf16_lossy(&label[..len as usize]) != format!("{value}%") {
+                return Err("Q 版身体大小标签未同步".into());
+            }
+        }
+        for _ in 0..30 {
+            SendMessageW(slider, WM_KEYDOWN, VK_RIGHT as usize, 0);
+            UpdateWindow(slider);
+        }
+        verify_slider_repaint(a, slider, &format!("{tag}-keyboard"))?;
+    }
+    a.settings.chibi = original.0;
+    a.settings.chibi_body_scale = original.1;
+    a.refresh_panel();
+    Ok(())
+}
+
+pub(super) unsafe fn panel_self_test(a: &mut App) -> Result<(), String> {
+    if a.panel.is_null() {
+        return Err("控制台未创建".into());
+    }
+    let old_font = a.font;
+    // Deliver the system notification locally without modifying Windows settings.
+    SendMessageW(
+        a.panel,
+        WM_SETTINGCHANGE,
+        SPI_SETNONCLIENTMETRICS as usize,
+        0,
+    );
+    if a.font.is_null()
+        || a.font == old_font
+        || SendMessageW(a.ctrl(139), WM_GETFONT, 0, 0) != a.font as isize
+    {
+        return Err("系统字体通知后控件未更新字体".into());
+    }
+    let mut font_spec: LOGFONTW = std::mem::zeroed();
+    GetObjectW(
+        a.font,
+        std::mem::size_of::<LOGFONTW>() as i32,
+        &mut font_spec as *mut _ as *mut _,
+    );
+    let font_name = String::from_utf16_lossy(
+        &font_spec.lfFaceName[..font_spec
+            .lfFaceName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(font_spec.lfFaceName.len())],
+    );
+    let pet_size = [a.width, a.height];
+    let mut observations = Vec::new();
+    for dark in [false, true] {
+        a.theme_override = Some(dark);
+        a.apply_theme();
+        a.panel_ui.motion_enabled = false;
+        a.panel_ui.keyboard = true;
+        let frame = a.panel_frame(GetDpiForWindow(a.panel));
+        SetWindowPos(
+            a.panel,
+            null_mut(),
+            0,
+            0,
+            (PANEL_WIDTH * a.panel_scale).round() as i32 + frame[0],
+            (PANEL_HEIGHT * a.panel_scale).round() as i32 + frame[1],
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        for page in [0, 3, 4, 1, 2] {
+            SendMessageW(a.ctrl(150 + page), BM_CLICK, 0, 0);
+            if a.panel_page != page as u8 {
+                return Err(format!("导航控件没有切到第 {page} 页"));
+            }
+            a.refresh_panel();
+            RedrawWindow(
+                a.panel,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+            save_panel_image(
+                a,
+                &format!(
+                    "console-{}-page-{page}.png",
+                    if dark { "dark" } else { "light" }
+                ),
+            )?;
+            let mut visible_count = 0;
+            for &(hwnd, owner) in &a.page_controls {
+                let visible = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_VISIBLE != 0;
+                if visible != (owner == GLOBAL_PAGE || owner == page as u8) {
+                    return Err("页面控件可见性错误".into());
+                }
+                visible_count += visible as usize;
+            }
+            observations.push(serde_json::json!({"theme":if dark {"dark"}else{"light"},"page":page,"visibleControls":visible_count}));
+        }
+    }
+    slider_drag_self_test(a)?;
+    a.show_page(0);
+    let original_chibi = a.settings.chibi;
+    SendMessageW(a.ctrl(139), BM_CLICK, 0, 0);
+    if a.settings.chibi == original_chibi {
+        return Err("Q 版开关未更新业务设置".into());
+    }
+    if (IsWindowEnabled(a.ctrl(212)) != 0) != a.settings.chibi {
+        return Err("Q 版滑块禁用状态错误".into());
+    }
+    SendMessageW(a.ctrl(139), BM_CLICK, 0, 0);
+    a.show_page(4);
+    let squash = a.settings.typing_squash;
+    SendMessageW(a.ctrl(211), TBM_SETPOS, 1, 12);
+    SendMessageW(
+        a.panel,
+        WM_HSCROLL,
+        TB_ENDTRACK as usize,
+        a.ctrl(211) as isize,
+    );
+    if (a.settings.typing_squash - 12.).abs() > 0.01 {
+        return Err("滑块未更新业务设置".into());
+    }
+    SendMessageW(a.ctrl(211), TBM_SETPOS, 1, squash.round() as isize);
+    SendMessageW(
+        a.panel,
+        WM_HSCROLL,
+        TB_ENDTRACK as usize,
+        a.ctrl(211) as isize,
+    );
+    let dpi = GetDpiForWindow(a.panel).max(96);
+    let frame = a.panel_frame(dpi);
+    let minimum = a.panel_default_scale(MonitorFromWindow(a.panel, MONITOR_DEFAULTTONEAREST), dpi);
+    let base = [
+        (PANEL_WIDTH * minimum).round() as i32,
+        (PANEL_HEIGHT * minimum).round() as i32,
+    ];
+    let mut monitor: MONITORINFO = std::mem::zeroed();
+    monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    GetMonitorInfoW(
+        MonitorFromWindow(a.panel, MONITOR_DEFAULTTONEAREST),
+        &mut monitor,
+    );
+    let extra_width =
+        260.min((monitor.rcWork.right - monitor.rcWork.left - frame[0] - base[0]).max(0));
+    let extra_height =
+        16.min((monitor.rcWork.bottom - monitor.rcWork.top - frame[1] - base[1]).max(0));
+    if extra_width == 0 || extra_height == 0 {
+        return Err("显示器没有空间验证独立宽高调整".into());
+    }
+    for (name, extra) in [
+        ("minimum", [0, 0]),
+        ("wide", [extra_width, 0]),
+        ("tall", [0, extra_height]),
+        ("large", [extra_width, extra_height]),
+    ] {
+        SetWindowPos(
+            a.panel,
+            null_mut(),
+            0,
+            0,
+            base[0] + extra[0] + frame[0],
+            base[1] + extra[1] + frame[1],
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        let mut client: RECT = std::mem::zeroed();
+        GetClientRect(a.panel, &mut client);
+        if client.right != base[0] + extra[0] || client.bottom != base[1] + extra[1] {
+            return Err(format!(
+                "独立宽高调整错误: {name} expected={}x{} actual={}x{}",
+                base[0] + extra[0],
+                base[1] + extra[1],
+                client.right,
+                client.bottom
+            ));
+        }
+        for page in [0, 3, 4, 1, 2] {
+            a.show_page(page);
+            let mut visible_bounds: Vec<(HWND, RECT)> = Vec::new();
+            for &(hwnd, _) in &a.layout {
+                if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_VISIBLE == 0 {
+                    continue;
+                }
+                let mut actual: RECT = std::mem::zeroed();
+                GetWindowRect(hwnd, &mut actual);
+                MapWindowPoints(
+                    null_mut(),
+                    a.panel,
+                    &mut actual as *mut RECT as *mut POINT,
+                    2,
+                );
+                if actual.left < 0
+                    || actual.top < 0
+                    || actual.right > client.right + 1
+                    || actual.bottom > client.bottom + 1
+                {
+                    return Err(format!("{name} 页面{page}控件{}越界", GetDlgCtrlID(hwnd)));
+                }
+                for &(other, bounds) in &visible_bounds {
+                    if actual.left < bounds.right
+                        && actual.right > bounds.left
+                        && actual.top < bounds.bottom
+                        && actual.bottom > bounds.top
+                    {
+                        return Err(format!(
+                            "{name} 页面{page}控件{}与{}重叠",
+                            GetDlgCtrlID(hwnd),
+                            GetDlgCtrlID(other)
+                        ));
+                    }
+                }
+                visible_bounds.push((hwnd, actual));
+            }
+        }
+        save_panel_image(a, &format!("console-size-{name}.png"))?;
+        observations.push(serde_json::json!({"size":name,"client":[client.right,client.bottom]}));
+    }
+    SetWindowPos(
+        a.panel,
+        null_mut(),
+        0,
+        0,
+        100,
+        100,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    let mut actual: RECT = std::mem::zeroed();
+    GetClientRect(a.panel, &mut actual);
+    if actual.right < base[0] || actual.bottom < base[1] {
+        return Err("最小尺寸约束失效".into());
+    }
+    ShowWindow(a.panel, SW_MAXIMIZE);
+    GetClientRect(a.panel, &mut actual);
+    observations.push(serde_json::json!({"maximizedClient":[actual.right,actual.bottom]}));
+    ShowWindow(a.panel, SW_RESTORE);
+    // Stress the real navigation command path; no transient overlay windows
+    // may survive because pages are committed in one composited repaint.
+    let navigation_started = Instant::now();
+    for n in 0..100 {
+        SendMessageW(a.panel, WM_COMMAND, (150 + n % 5) as usize, 0);
+    }
+    observations
+        .push(serde_json::json!({"navigation100Ms":navigation_started.elapsed().as_millis()}));
+    if FindWindowExW(
+        a.panel,
+        null_mut(),
+        wide("MinecraftConsoleTransition").as_ptr(),
+        null(),
+    ) != null_mut()
+    {
+        return Err("发现残留的切页叠加窗口".into());
+    }
+    crate::tray_panel::self_test(a)?;
+    if [a.width, a.height] != pet_size {
+        return Err("控制台缩放意外改变桌宠本体大小".into());
+    }
+    config::atomic(
+        &a.store.dir.join("ui-self-test.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "passed":true,"navigation":true,"switches":true,"sliderPersistence":true,
+            "petSizeUnchanged":true,"atomicNavigation":true,"trayPanel":true,
+            "trayPresentedPixels":true,"trayTabStressClicks":80,"layoutOverlapChecked":true,
+            "sliderDragPresentedPixels":true,"sliderKeyboardPresentedPixels":true,
+            "systemFont":{"face":font_name,"pixelHeight":font_spec.lfHeight,"settingsNotification":true},
+            "defaultLogicalSize":[PANEL_WIDTH,PANEL_HEIGHT],
+            "independentResize":true,"minimumSize":true,"observations":observations
+        }))
+        .map_err(|e| e.to_string())?
+        .as_slice(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod console_geometry_tests {
+    use super::*;
+    #[test]
+    fn default_minimum_fits_work_area_at_multiple_dpis() {
+        for dpi in [96, 120, 144, 192] {
+            for work in [[1280, 680], [1920, 1032], [2560, 1392]] {
+                let frame = [16 * dpi as i32 / 96, 39 * dpi as i32 / 96];
+                let s = default_panel_scale(dpi, work, frame);
+                assert!(PANEL_WIDTH * s + frame[0] as f32 + 23. <= work[0] as f32);
+                assert!(PANEL_HEIGHT * s + frame[1] as f32 + 23. <= work[1] as f32);
+            }
+        }
+    }
+    #[test]
+    fn regular_display_uses_the_declared_default() {
+        assert_eq!(default_panel_scale(96, [1920, 1080], [16, 39]), 1.);
+        assert_eq!(default_panel_scale(144, [2560, 1440], [24, 58]), 1.5);
+    }
+}
 pub(super) unsafe fn diagnostic_snapshot(a: &mut App) {
+    if !a.panel.is_null() {
+        let _ = save_panel_image(a, "console.png");
+    }
     let _ = config::atomic(
         &a.store.dir.join("input-trace.json"),
         serde_json::to_string_pretty(&a.input_trace)
@@ -891,6 +1631,21 @@ pub(super) unsafe fn diagnostic_snapshot(a: &mut App) {
         .iter()
         .map(|(id, h)| serde_json::json!({"id":id,"hwnd":*h as usize}))
         .collect();
+    let mut panel_client: RECT = std::mem::zeroed();
+    if !a.panel.is_null() {
+        GetClientRect(a.panel, &mut panel_client);
+    }
+    let _ = config::atomic(
+        &a.store.dir.join("console-geometry.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "client": [panel_client.right,panel_client.bottom],
+            "scale": a.panel_scale, "defaultLogicalSize": [PANEL_WIDTH,PANEL_HEIGHT], "aspectLocked": false,
+             "dpi": a.panel_ui.dpi,
+            "page": a.panel_page, "motionEnabled": a.panel_ui.motion_enabled
+        }))
+        .unwrap()
+        .as_slice(),
+    );
     let data = serde_json::json!({"pid":std::process::id(),"pet":a.hwnd as usize,"panel":a.panel as usize,"controls":controls,"settings":a.settings,"page":a.panel_page,"renderCount":a.render_count,"musicPlaying":a.pose.music_playing,"interaction":a.pose.interaction_state(),"darkMode":a.panel_dark,"effects":a.pose.effect_counts(),"rasterUs":a.raster_us,"presentUs":a.present_us,"tickGapMaxUs":a.tick_gap_max_us,"tickGapAvgUs":a.tick_gap_sum_us/a.tick_gap_count.max(1),"clicks":a.click_count,"dpi":a.dpi,"head":{"yaw":a.pose.yaw,"pitch":a.pose.pitch,"local":a.pose.head_rotation.to_array()},"sit":a.pose.sit,"crouch":a.pose.crouch,"arms":a.pose.arms.map(|q|q.to_array()),"hook":!a.hook.is_null(),"clickPolling":true,"trayOk":a.tray_ok,"trayError":a.tray_error,"heldKeys":a.pose.held_codes(),"squash":a.pose.squash,"swingProgress":a.pose.swing_progress,"bodyYaw":a.pose.body_yaw,"onlinePending":a.download.is_some(),"onlineNotice":a.online_notice,"bounds":a.frame.bounds,"position":[a.pos.x,a.pos.y],"size":[a.width,a.height]});
     let _ = config::atomic(
         &a.store.dir.join("diagnostic.json"),

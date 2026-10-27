@@ -1,0 +1,114 @@
+{
+  "atomicNavigation": true,
+  "defaultLogicalSize": [
+    760.0,
+    700.0
+  ],
+  "independentResize": true,
+  "layoutOverlapChecked": true,
+  "minimumSize": true,
+  "navigation": true,
+  "observations": [
+    {
+      "page": 0,
+      "theme": "light",
+      "visibleControls": 29
+    },
+    {
+      "page": 3,
+      "theme": "light",
+      "visibleControls": 31
+    },
+    {
+      "page": 4,
+      "theme": "light",
+      "visibleControls": 27
+    },
+    {
+      "page": 1,
+      "theme": "light",
+      "visibleControls": 43
+    },
+    {
+      "page": 2,
+      "theme": "light",
+      "visibleControls": 62
+    },
+    {
+      "page": 0,
+      "theme": "dark",
+      "visibleControls": 29
+    },
+    {
+      "page": 3,
+      "theme": "dark",
+      "visibleControls": 31
+    },
+    {
+      "page": 4,
+      "theme": "dark",
+      "visibleControls": 27
+    },
+    {
+      "page": 1,
+      "theme": "dark",
+      "visibleControls": 43
+    },
+    {
+      "page": 2,
+      "theme": "dark",
+      "visibleControls": 62
+    },
+    {
+      "client": [
+        950,
+        875
+      ],
+      "size": "minimum"
+    },
+    {
+      "client": [
+        1210,
+        875
+      ],
+      "size": "wide"
+    },
+    {
+      "client": [
+        950,
+        891
+      ],
+      "size": "tall"
+    },
+    {
+      "client": [
+        1210,
+        891
+      ],
+      "size": "large"
+    },
+    {
+      "maximizedClient": [
+        1920,
+        1001
+      ]
+    },
+    {
+      "navigation100Ms": 2045
+    }
+  ],
+  "passed": true,
+  "petSizeUnchanged": true,
+  "sliderDragPresentedPixels": true,
+  "sliderKeyboardPresentedPixels": true,
+  "sliderPersistence": true,
+  "switches": true,
+  "systemFont": {
+    "face": "Microsoft YaHei UI",
+    "pixelHeight": -15,
+    "settingsNotification": true
+  },
+  "trayPanel": true,
+  "trayPresentedPixels": true,
+  "trayTabStressClicks": 80
+}

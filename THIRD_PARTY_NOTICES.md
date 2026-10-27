@@ -59,3 +59,32 @@ Minecraft 资源属于各自权利人。本项目与 Mojang / Microsoft 无隶�
 
 
 The Q-style model and original eye/Shift animation support are based on zsyghxf's PR #5 (commit 7ba3b87862272b13f7f10cdb4b225ced1b9350d6), with behavior and interaction changes by DLmember. DA animation adjustments reference the user-provided DetailedAnimationsXJustExpressions resource pack; the pack itself and user skins/capes are not bundled. Microsoft YaHei UI is accessed through the installed Windows font; no font file is redistributed.
+
+
+## CC Switch console design
+
+The Windows console ports colors, spacing, typography sizes, component styling and motion values from farion1231/cc-switch (v7 design system), adapted to native Win32 controls. Source: https://github.com/farion1231/cc-switch . CC Switch is not bundled and does not endorse this project.
+
+The native tray panel additionally adapts the Windows tray-panel visual design from CC Switch v4.0.21 (released October 26, 2026), particularly src/tray-panel/TrayPanel.tsx and tray-panel.css. The original application commands and native Windows implementation remain specific to Minecraft Desktop Pet. The same MIT notice below applies.
+
+MIT License
+
+Copyright (c) 2025 Jason Young
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
